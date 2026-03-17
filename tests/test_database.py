@@ -42,7 +42,7 @@ class TestDatabaseInit:
     async def test_schema_version(self, db: DatabaseManager):
         cursor = await db.db.execute("SELECT MAX(version) FROM schema_version")
         row = await cursor.fetchone()
-        assert row[0] == 1
+        assert row[0] == 2
 
     async def test_idempotent_init(self, tmp_path):
         """Running initialize twice should not fail."""

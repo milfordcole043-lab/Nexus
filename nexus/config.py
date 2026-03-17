@@ -44,6 +44,21 @@ class BriefingConfig(BaseModel):
     ntfy_topic: str = "nexus-briefing"
 
 
+class FileWatcherConfig(BaseModel):
+    """Configuration for the file watcher agent."""
+
+    enabled: bool = True
+    debounce_seconds: float = 2.0
+    max_file_size_mb: int = 50
+    ignore_patterns: list[str] = [
+        "*.tmp", "*.crdownload", "*.part", "*.partial",
+        "Thumbs.db", ".DS_Store", "desktop.ini",
+        "~$*", "*.swp", "*.swo",
+    ]
+    summary_enabled: bool = True
+    notification_enabled: bool = True
+
+
 class NexusConfig(BaseModel):
     """Root configuration for Nexus."""
 
@@ -55,6 +70,7 @@ class NexusConfig(BaseModel):
     llm_cascade: list[LLMProviderConfig] = Field(default_factory=list)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     briefing: BriefingConfig = Field(default_factory=BriefingConfig)
+    file_watcher: FileWatcherConfig = Field(default_factory=FileWatcherConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> NexusConfig:

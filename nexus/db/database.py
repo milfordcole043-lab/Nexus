@@ -19,7 +19,7 @@ from nexus.db.models import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -103,6 +103,20 @@ MIGRATIONS: dict[int, str] = {
     CREATE INDEX IF NOT EXISTS idx_agent_logs_agent ON agent_logs(agent_name);
     CREATE INDEX IF NOT EXISTS idx_agent_logs_status ON agent_logs(status);
     CREATE INDEX IF NOT EXISTS idx_agent_logs_created ON agent_logs(created_at);
+    """,
+    2: """
+    CREATE TABLE IF NOT EXISTS document_entities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+        entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        context_snippet TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(document_id, entity_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_doc_entities_doc ON document_entities(document_id);
+    CREATE INDEX IF NOT EXISTS idx_doc_entities_entity ON document_entities(entity_id);
     """,
 }
 
@@ -239,6 +253,14 @@ class DatabaseManager:
         rows = await cursor.fetchall()
         return [Document(**dict(r)) for r in rows]
 
+    async def delete_document_by_path(self, file_path: str) -> bool:
+        """Delete a document by file path. Returns True if a row was deleted."""
+        cursor = await self.db.execute(
+            "DELETE FROM documents WHERE file_path = ?", (file_path,)
+        )
+        await self.db.commit()
+        return cursor.rowcount > 0
+
     # --- Embeddings ---
 
     async def insert_embedding(self, emb: Embedding) -> int:
@@ -266,6 +288,13 @@ class DatabaseManager:
         )
         rows = await cursor.fetchall()
         return [Embedding(**dict(r)) for r in rows]
+
+    async def delete_embeddings_for_document(self, doc_id: int) -> None:
+        """Delete all embeddings for a document."""
+        await self.db.execute(
+            "DELETE FROM embeddings WHERE document_id = ?", (doc_id,)
+        )
+        await self.db.commit()
 
     async def get_all_embeddings(self) -> list[Embedding]:
         """Get all embeddings (for brute-force search)."""
@@ -309,6 +338,64 @@ class DatabaseManager:
         where = " AND ".join(conditions) if conditions else "1=1"
         cursor = await self.db.execute(
             f"SELECT * FROM entities WHERE {where}", params  # noqa: S608
+        )
+        rows = await cursor.fetchall()
+        return [Entity(**dict(r)) for r in rows]
+
+    # --- Document-Entity Links ---
+
+    async def link_entity_to_document(
+        self,
+        doc_id: int,
+        entity_id: int,
+        confidence: float = 1.0,
+        context_snippet: str | None = None,
+    ) -> int:
+        """Link an entity to a document."""
+        cursor = await self.db.execute(
+            """INSERT INTO document_entities (document_id, entity_id, confidence, context_snippet)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(document_id, entity_id) DO UPDATE SET
+                   confidence = excluded.confidence,
+                   context_snippet = excluded.context_snippet""",
+            (doc_id, entity_id, confidence, context_snippet),
+        )
+        await self.db.commit()
+        return cursor.lastrowid  # type: ignore[return-value]
+
+    async def get_entities_for_document(self, doc_id: int) -> list[Entity]:
+        """Get all entities linked to a document."""
+        cursor = await self.db.execute(
+            """SELECT e.* FROM entities e
+               JOIN document_entities de ON e.id = de.entity_id
+               WHERE de.document_id = ?""",
+            (doc_id,),
+        )
+        rows = await cursor.fetchall()
+        return [Entity(**dict(r)) for r in rows]
+
+    async def get_documents_for_entity(self, entity_id: int) -> list[Document]:
+        """Get all documents linked to an entity."""
+        cursor = await self.db.execute(
+            """SELECT d.* FROM documents d
+               JOIN document_entities de ON d.id = de.document_id
+               WHERE de.entity_id = ?""",
+            (entity_id,),
+        )
+        rows = await cursor.fetchall()
+        return [Document(**dict(r)) for r in rows]
+
+    async def delete_entity_links_for_document(self, doc_id: int) -> None:
+        """Delete all entity links for a document."""
+        await self.db.execute(
+            "DELETE FROM document_entities WHERE document_id = ?", (doc_id,)
+        )
+        await self.db.commit()
+
+    async def get_entity_by_name(self, name: str) -> list[Entity]:
+        """Get entities by exact name match."""
+        cursor = await self.db.execute(
+            "SELECT * FROM entities WHERE name = ?", (name,)
         )
         rows = await cursor.fetchall()
         return [Entity(**dict(r)) for r in rows]
@@ -422,7 +509,7 @@ class DatabaseManager:
     async def get_stats(self) -> dict[str, int]:
         """Get row counts for all tables."""
         stats = {}
-        for table in ["documents", "embeddings", "entities", "entity_relations", "briefings", "agent_logs"]:
+        for table in ["documents", "embeddings", "entities", "entity_relations", "document_entities", "briefings", "agent_logs"]:
             cursor = await self.db.execute(f"SELECT COUNT(*) FROM {table}")  # noqa: S608
             row = await cursor.fetchone()
             stats[table] = row[0] if row else 0

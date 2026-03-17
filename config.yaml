@@ -41,3 +41,18 @@ briefing:
   schedule: "08:00"
   timezone: Europe/Amsterdam
   ntfy_topic: nexus-briefing
+
+file_watcher:
+  enabled: true
+  debounce_seconds: 2.0
+  max_file_size_mb: 50
+  summary_enabled: true
+  notification_enabled: true
+  ignore_patterns:
+    - "*.tmp"
+    - "*.crdownload"
+    - "*.part"
+    - "Thumbs.db"
+    - ".DS_Store"
+    - "desktop.ini"
+    - "~$*"
