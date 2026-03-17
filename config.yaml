@@ -41,6 +41,9 @@ briefing:
   schedule: "08:00"
   timezone: Europe/Amsterdam
   ntfy_topic: nexus-briefing
+  enabled: true
+  include_git: true
+  lookback_hours: 24
 
 file_watcher:
   enabled: true

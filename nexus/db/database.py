@@ -504,6 +504,66 @@ class DatabaseManager:
         rows = await cursor.fetchall()
         return [AgentLog(**dict(r)) for r in rows]
 
+    # --- Briefing Queries ---
+
+    async def list_briefings(self, limit: int = 10) -> list[Briefing]:
+        """List recent briefings."""
+        cursor = await self.db.execute(
+            "SELECT * FROM briefings ORDER BY created_at DESC LIMIT ?", (limit,)
+        )
+        rows = await cursor.fetchall()
+        return [Briefing(**dict(r)) for r in rows]
+
+    # --- Document Queries ---
+
+    async def get_recent_documents(self, since: str, limit: int = 100) -> list[Document]:
+        """Get documents created since a given timestamp."""
+        cursor = await self.db.execute(
+            "SELECT * FROM documents WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
+            (since, limit),
+        )
+        rows = await cursor.fetchall()
+        return [Document(**dict(r)) for r in rows]
+
+    async def get_documents_by_path_prefix(
+        self, prefix: str, since: str | None = None, limit: int = 100
+    ) -> list[Document]:
+        """Get documents whose file_path starts with a given prefix."""
+        if since:
+            cursor = await self.db.execute(
+                "SELECT * FROM documents WHERE file_path LIKE ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
+                (f"{prefix}%", since, limit),
+            )
+        else:
+            cursor = await self.db.execute(
+                "SELECT * FROM documents WHERE file_path LIKE ? ORDER BY created_at DESC LIMIT ?",
+                (f"{prefix}%", limit),
+            )
+        rows = await cursor.fetchall()
+        return [Document(**dict(r)) for r in rows]
+
+    async def get_most_active_entities(
+        self, since: str, limit: int = 10
+    ) -> list[tuple[Entity, int]]:
+        """Get entities with the most document links since a timestamp."""
+        cursor = await self.db.execute(
+            """SELECT e.*, COUNT(de.id) as link_count
+               FROM entities e
+               JOIN document_entities de ON e.id = de.entity_id
+               WHERE de.created_at >= ?
+               GROUP BY e.id
+               ORDER BY link_count DESC
+               LIMIT ?""",
+            (since, limit),
+        )
+        rows = await cursor.fetchall()
+        results = []
+        for r in rows:
+            d = dict(r)
+            link_count = d.pop("link_count")
+            results.append((Entity(**d), link_count))
+        return results
+
     # --- Stats ---
 
     async def get_stats(self) -> dict[str, int]:

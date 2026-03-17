@@ -11,9 +11,11 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from nexus.agents.briefing import BriefingAgent
 from nexus.agents.file_watcher import FileWatcherAgent
 from nexus.agents.memory import MemoryAgent
 from nexus.agents.memory.agent import QueryMode
+from nexus.agents.project_context import ProjectContextAgent
 from nexus.config import NexusConfig
 from nexus.db.database import DatabaseManager
 from nexus.db.vectors import EmbeddingPipeline
@@ -29,6 +31,8 @@ cascade: CascadeManager | None = None
 pipeline: EmbeddingPipeline | None = None
 watcher: FileWatcherAgent | None = None
 memory: MemoryAgent | None = None
+briefing_agent: BriefingAgent | None = None
+project_context_agent: ProjectContextAgent | None = None
 
 
 def _build_cascade(cfg: NexusConfig) -> CascadeManager:
@@ -56,7 +60,7 @@ def _build_cascade(cfg: NexusConfig) -> CascadeManager:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan — init config, DB, cascade, watcher, memory."""
-    global config, db, cascade, pipeline, watcher, memory
+    global config, db, cascade, pipeline, watcher, memory, briefing_agent, project_context_agent
 
     config_path = Path("config.yaml")
     config = NexusConfig.from_yaml(config_path)
@@ -86,6 +90,46 @@ async def lifespan(app: FastAPI):
         pipeline=pipeline,
     )
 
+    # Initialize briefing agent
+    briefing_agent = BriefingAgent(
+        name="briefing",
+        description="Daily briefing generator",
+        cascade=cascade,
+        db=db,
+        config=config,
+        memory=memory,
+    )
+
+    # Initialize project context agent
+    project_context_agent = ProjectContextAgent(
+        name="project_context",
+        description="Project context assembler",
+        cascade=cascade,
+        db=db,
+        memory=memory,
+    )
+
+    # Start scheduler if briefing enabled
+    scheduler = None
+    if config.briefing.enabled:
+        try:
+            from apscheduler import AsyncScheduler
+            from apscheduler.triggers.cron import CronTrigger
+
+            hour, minute = config.briefing.schedule.split(":")
+            scheduler = AsyncScheduler()
+            await scheduler.__aenter__()
+            await scheduler.add_schedule(
+                briefing_agent.generate_briefing,
+                CronTrigger(hour=int(hour), minute=int(minute), timezone=config.briefing.timezone),
+                id="daily-briefing",
+            )
+            await scheduler.start_in_background()
+            logger.info("Briefing scheduler started: %s %s", config.briefing.schedule, config.briefing.timezone)
+        except Exception as e:
+            logger.warning("Failed to start briefing scheduler: %s", e)
+            scheduler = None
+
     # Start file watcher if enabled
     watcher_task = None
     if config.file_watcher.enabled:
@@ -113,6 +157,12 @@ async def lifespan(app: FastAPI):
             await watcher_task
         except asyncio.CancelledError:
             pass
+
+    if scheduler:
+        try:
+            await scheduler.__aexit__(None, None, None)
+        except Exception as e:
+            logger.warning("Scheduler shutdown error: %s", e)
 
     await db.close()
     logger.info("Nexus shut down")
@@ -327,4 +377,86 @@ async def get_file(doc_id: int):
         "hash": doc.hash,
         "created_at": doc.created_at,
         "updated_at": doc.updated_at,
+    }
+
+
+# --- Briefing Endpoints ---
+
+
+@app.post("/briefing/generate")
+async def generate_briefing():
+    """Trigger briefing generation manually."""
+    if not briefing_agent:
+        raise HTTPException(status_code=503, detail="Briefing agent not initialized")
+    result = await briefing_agent.generate_briefing()
+    return {
+        "content": result.content,
+        "summary": result.summary,
+        "sections": result.sections,
+        "generated_at": result.generated_at,
+    }
+
+
+@app.get("/briefing/latest")
+async def get_latest_briefing():
+    """Get the most recent briefing."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+    briefing = await db.get_latest_briefing()
+    if not briefing:
+        raise HTTPException(status_code=404, detail="No briefings found")
+    return {
+        "id": briefing.id,
+        "content": briefing.content,
+        "summary": briefing.summary,
+        "delivered": briefing.delivered,
+        "delivered_at": briefing.delivered_at,
+        "created_at": briefing.created_at,
+    }
+
+
+@app.get("/briefing/history")
+async def briefing_history(limit: int = 10):
+    """Get recent briefing history."""
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not initialized")
+    briefings = await db.list_briefings(limit=limit)
+    return {
+        "briefings": [
+            {
+                "id": b.id,
+                "summary": b.summary,
+                "delivered": b.delivered,
+                "created_at": b.created_at,
+            }
+            for b in briefings
+        ]
+    }
+
+
+# --- Project Context Endpoints ---
+
+
+@app.get("/context/{project_path:path}")
+async def get_project_context(project_path: str):
+    """Generate project context for a given path."""
+    if not project_context_agent:
+        raise HTTPException(status_code=503, detail="Project context agent not initialized")
+
+    resolved = Path(project_path).resolve()
+    if not resolved.is_dir():
+        raise HTTPException(status_code=404, detail=f"Directory not found: {project_path}")
+
+    ctx = await project_context_agent.get_context(str(resolved))
+    return {
+        "project_name": ctx.project_name,
+        "branch": ctx.branch,
+        "recent_commits": ctx.recent_commits,
+        "uncommitted_changes": ctx.uncommitted_changes,
+        "key_files": ctx.key_files,
+        "related_knowledge": [
+            {"title": s.title, "score": round(s.score, 4)} for s in ctx.related_knowledge
+        ],
+        "context_block": ctx.context_block,
+        "generated_at": ctx.generated_at,
     }

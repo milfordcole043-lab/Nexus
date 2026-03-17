@@ -42,6 +42,9 @@ class BriefingConfig(BaseModel):
     schedule: str = "08:00"
     timezone: str = "Europe/Amsterdam"
     ntfy_topic: str = "nexus-briefing"
+    enabled: bool = True
+    include_git: bool = True
+    lookback_hours: int = 24
 
 
 class FileWatcherConfig(BaseModel):
