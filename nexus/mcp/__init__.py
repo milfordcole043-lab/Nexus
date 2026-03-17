@@ -1,1 +1,1 @@
-"""MCP server integration (Phase 2+)."""
+"""Nexus MCP server — knowledge graph tools for Claude Code."""

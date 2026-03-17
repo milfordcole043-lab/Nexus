@@ -11,6 +11,27 @@ from nexus.llm.provider import LLMProvider, LLMResponse
 logger = logging.getLogger(__name__)
 
 
+def build_cascade(cfg) -> "CascadeManager":
+    """Build a CascadeManager from NexusConfig. Lazy-imports optional providers."""
+    from nexus.llm.ollama import OllamaProvider
+
+    providers: list[LLMProvider] = []
+    for p in cfg.llm_cascade:
+        if p.type == "ollama":
+            providers.append(OllamaProvider(p, embed_model=cfg.embedding.model))
+        elif p.type == "groq":
+            try:
+                from nexus.llm.groq import GroqProvider
+                providers.append(GroqProvider(p))
+            except (ValueError, ImportError) as e:
+                logger.warning("Skipping Groq provider: %s", e)
+        elif p.type == "claude":
+            logger.info("Claude provider not yet implemented, skipping")
+    if not providers:
+        raise RuntimeError("No LLM providers could be initialized")
+    return CascadeManager(providers)
+
+
 class AllProvidersFailedError(Exception):
     """Raised when all providers in the cascade have failed."""
 

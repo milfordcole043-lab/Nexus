@@ -19,8 +19,7 @@ from nexus.agents.project_context import ProjectContextAgent
 from nexus.config import NexusConfig
 from nexus.db.database import DatabaseManager
 from nexus.db.vectors import EmbeddingPipeline
-from nexus.llm.cascade import CascadeManager
-from nexus.llm.ollama import OllamaProvider
+from nexus.llm.cascade import CascadeManager, build_cascade
 
 logger = logging.getLogger(__name__)
 
@@ -33,28 +32,6 @@ watcher: FileWatcherAgent | None = None
 memory: MemoryAgent | None = None
 briefing_agent: BriefingAgent | None = None
 project_context_agent: ProjectContextAgent | None = None
-
-
-def _build_cascade(cfg: NexusConfig) -> CascadeManager:
-    """Build the LLM cascade from config. Lazy-imports to avoid missing deps."""
-    providers = []
-    for p in cfg.llm_cascade:
-        if p.type == "ollama":
-            providers.append(
-                OllamaProvider(p, embed_model=cfg.embedding.model)
-            )
-        elif p.type == "groq":
-            try:
-                from nexus.llm.groq import GroqProvider
-                providers.append(GroqProvider(p))
-            except (ValueError, ImportError) as e:
-                logger.warning("Skipping Groq provider: %s", e)
-        elif p.type == "claude":
-            # Claude provider not implemented in Phase 1
-            logger.info("Claude provider not yet implemented, skipping")
-    if not providers:
-        raise RuntimeError("No LLM providers could be initialized")
-    return CascadeManager(providers)
 
 
 @asynccontextmanager
@@ -71,7 +48,7 @@ async def lifespan(app: FastAPI):
     db = DatabaseManager(config.resolved_db_path)
     await db.initialize()
 
-    cascade = _build_cascade(config)
+    cascade = build_cascade(config)
     pipeline = EmbeddingPipeline(
         cascade=cascade,
         db=db,
