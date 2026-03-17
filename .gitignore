@@ -1,0 +1,12 @@
+# Nexus
+
+.venv/
+__pycache__/
+*.pyc
+*.db
+.env
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+lancedb/

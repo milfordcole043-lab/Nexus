@@ -1,0 +1,43 @@
+# Nexus Configuration
+
+watch_directories:
+  - ~/Documents
+  - ~/Desktop
+  - ~/Downloads
+
+db_path: ./nexus.db
+
+log_level: INFO
+
+chunk_size: 500
+chunk_overlap: 50
+
+llm_cascade:
+  - type: ollama
+    model: llama3.2
+    base_url: http://localhost:11434
+    max_tokens: 2048
+    temperature: 0.7
+
+  - type: groq
+    model: llama-3.3-70b-versatile
+    api_key_env: GROQ_API_KEY
+    max_tokens: 2048
+    temperature: 0.7
+
+  - type: claude
+    model: claude-sonnet-4-20250514
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 2048
+    temperature: 0.7
+
+embedding:
+  provider: ollama
+  model: nomic-embed-text
+  base_url: http://localhost:11434
+  dimensions: 768
+
+briefing:
+  schedule: "08:00"
+  timezone: Europe/Amsterdam
+  ntfy_topic: nexus-briefing
