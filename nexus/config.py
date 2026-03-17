@@ -70,6 +70,8 @@ class NexusConfig(BaseModel):
     log_level: str = "INFO"
     chunk_size: int = 500
     chunk_overlap: int = 50
+    search_mode: Literal["hybrid", "vector", "keyword"] = "hybrid"
+    lancedb_path: str = "./nexus_lancedb"
     llm_cascade: list[LLMProviderConfig] = Field(default_factory=list)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     briefing: BriefingConfig = Field(default_factory=BriefingConfig)
@@ -89,6 +91,11 @@ class NexusConfig(BaseModel):
             data = {}
 
         return cls.model_validate(data)
+
+    @property
+    def resolved_lancedb_path(self) -> Path:
+        """Resolve the LanceDB path relative to CWD."""
+        return Path(self.lancedb_path).resolve()
 
     @property
     def resolved_db_path(self) -> Path:

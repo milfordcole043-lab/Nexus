@@ -447,7 +447,7 @@ class TestDBMigration:
         """Schema version is 2 after migrations."""
         cursor = await db.db.execute("SELECT MAX(version) FROM schema_version")
         row = await cursor.fetchone()
-        assert row[0] == 2
+        assert row[0] == 3
 
     @pytest.mark.asyncio
     async def test_stats_include_document_entities(self, db):

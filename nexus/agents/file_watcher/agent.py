@@ -177,7 +177,7 @@ class FileWatcherAgent(BaseAgent):
         # 4. Store document
         now = datetime.now(UTC).isoformat()
         if existing:
-            await self.db.delete_embeddings_for_document(existing.id)  # type: ignore[arg-type]
+            await self.pipeline.delete_embeddings(existing.id)  # type: ignore[arg-type]
             await self.db.delete_entity_links_for_document(existing.id)  # type: ignore[arg-type]
             await self.db.update_document(
                 existing.id,  # type: ignore[arg-type]
