@@ -19,7 +19,7 @@ from nexus.db.models import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -117,6 +117,32 @@ MIGRATIONS: dict[int, str] = {
 
     CREATE INDEX IF NOT EXISTS idx_doc_entities_doc ON document_entities(document_id);
     CREATE INDEX IF NOT EXISTS idx_doc_entities_entity ON document_entities(entity_id);
+    """,
+    3: """
+    CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+        title, content, file_path, category,
+        content=documents, content_rowid=id
+    );
+
+    CREATE TRIGGER IF NOT EXISTS documents_ai AFTER INSERT ON documents BEGIN
+        INSERT INTO documents_fts(rowid, title, content, file_path, category)
+            VALUES (new.id, new.title, new.content, new.file_path, new.category);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS documents_au AFTER UPDATE ON documents BEGIN
+        INSERT INTO documents_fts(documents_fts, rowid, title, content, file_path, category)
+            VALUES('delete', old.id, old.title, old.content, old.file_path, old.category);
+        INSERT INTO documents_fts(rowid, title, content, file_path, category)
+            VALUES (new.id, new.title, new.content, new.file_path, new.category);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS documents_ad AFTER DELETE ON documents BEGIN
+        INSERT INTO documents_fts(documents_fts, rowid, title, content, file_path, category)
+            VALUES('delete', old.id, old.title, old.content, old.file_path, old.category);
+    END;
+
+    INSERT INTO documents_fts(rowid, title, content, file_path, category)
+        SELECT id, title, content, file_path, category FROM documents;
     """,
 }
 
@@ -305,15 +331,21 @@ class DatabaseManager:
     # --- Entities ---
 
     async def insert_entity(self, entity: Entity) -> int:
-        """Insert an entity (upsert on name+type)."""
-        cursor = await self.db.execute(
+        """Insert an entity (upsert on name+type). Returns the entity ID."""
+        await self.db.execute(
             """INSERT INTO entities (name, type, metadata_json, created_at)
                VALUES (?, ?, ?, ?)
                ON CONFLICT(name, type) DO UPDATE SET metadata_json = excluded.metadata_json""",
             (entity.name, entity.type, entity.metadata_json, entity.created_at),
         )
         await self.db.commit()
-        return cursor.lastrowid  # type: ignore[return-value]
+        # lastrowid is unreliable on upsert conflict — always fetch the real ID
+        cursor = await self.db.execute(
+            "SELECT id FROM entities WHERE name = ? AND type = ?",
+            (entity.name, entity.type),
+        )
+        row = await cursor.fetchone()
+        return row[0]  # type: ignore[index]
 
     async def get_entity(self, entity_id: int) -> Entity | None:
         """Get an entity by ID."""
@@ -563,6 +595,33 @@ class DatabaseManager:
             link_count = d.pop("link_count")
             results.append((Entity(**d), link_count))
         return results
+
+    # --- FTS5 Search ---
+
+    async def search_fts(self, query: str, limit: int = 20) -> list[tuple[int, float]]:
+        """Full-text search using FTS5. Returns (doc_id, bm25_rank) tuples."""
+        if not query or not query.strip():
+            return []
+
+        # Escape FTS5 special characters (. is column separator in FTS5)
+        sanitized = query.strip()
+        for char in ['"', "'", "*", "(", ")", ":", "^", "{", "}", "~", ".", "-", "+", "/", "\\"]:
+            sanitized = sanitized.replace(char, " ")
+        sanitized = " ".join(sanitized.split())  # collapse whitespace
+
+        if not sanitized:
+            return []
+
+        try:
+            cursor = await self.db.execute(
+                "SELECT rowid, rank FROM documents_fts WHERE documents_fts MATCH ? ORDER BY rank LIMIT ?",
+                (sanitized, limit),
+            )
+            rows = await cursor.fetchall()
+            return [(row[0], row[1]) for row in rows]
+        except Exception as e:
+            logger.warning("FTS5 search failed for query '%s': %s", query, e)
+            return []
 
     # --- Stats ---
 

@@ -11,6 +11,7 @@ import pytest
 import pytest_asyncio
 
 from nexus.db.database import DatabaseManager
+from nexus.db.lancedb_store import LanceDBStore
 from nexus.llm.cascade import CascadeManager
 from nexus.llm.provider import LLMProvider, LLMResponse
 
@@ -98,6 +99,14 @@ def mock_provider():
 def failing_provider():
     """Provide a provider that always fails."""
     return MockProvider(name="failing", should_fail=True)
+
+
+@pytest_asyncio.fixture
+async def lancedb_store(tmp_path: Path):
+    """Provide a temporary LanceDB store."""
+    store = LanceDBStore(tmp_path / "lancedb", dimensions=768)
+    await store.initialize()
+    return store
 
 
 @pytest.fixture

@@ -18,6 +18,7 @@ from nexus.agents.memory.agent import QueryMode
 from nexus.agents.project_context import ProjectContextAgent
 from nexus.config import NexusConfig
 from nexus.db.database import DatabaseManager
+from nexus.db.lancedb_store import LanceDBStore
 from nexus.db.vectors import EmbeddingPipeline
 from nexus.llm.cascade import CascadeManager, build_cascade
 
@@ -49,6 +50,12 @@ async def lifespan(app: FastAPI):
     await db.initialize()
 
     cascade = build_cascade(config)
+
+    lance_store = LanceDBStore(
+        config.resolved_lancedb_path,
+        dimensions=config.embedding.dimensions,
+    )
+
     pipeline = EmbeddingPipeline(
         cascade=cascade,
         db=db,
@@ -56,7 +63,10 @@ async def lifespan(app: FastAPI):
         dimensions=config.embedding.dimensions,
         chunk_size=config.chunk_size,
         chunk_overlap=config.chunk_overlap,
+        lancedb_store=lance_store,
+        search_mode=config.search_mode,
     )
+    await pipeline.initialize()
 
     # Initialize memory agent
     memory = MemoryAgent(
